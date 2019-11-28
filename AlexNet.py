@@ -9,9 +9,9 @@ from torch import nn
 
 
 class AlexNet(object):
-    def __init__(self, n_class):
+    def __init__(self, input_channels, n_class):
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3,
+            nn.Conv2d(in_channels=input_channels,
                       out_channels=96,
                       kernel_size=11,
                       stride=2,
