@@ -4,11 +4,9 @@
 # @Site      :
 # @File      : AlexNet.py
 
-import torch
 from torch import nn
 
-
-class AlexNet(object):
+class AlexNet(nn.Module):
     def __init__(self, input_channels, n_class):
         self.conv1 = nn.Sequential(
             nn.Conv2d(in_channels=input_channels,
