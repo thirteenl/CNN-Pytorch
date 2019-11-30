@@ -6,7 +6,7 @@
 from torch import nn
 
 
-class VGG(object):
+class VGG(nn.Module):
     def __init__(self, input_channels, n_class):
         self.conv1 = nn.Sequential(
             nn.Conv2d(in_channels=input_channels,
