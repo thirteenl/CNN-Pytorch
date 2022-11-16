@@ -1,165 +1,110 @@
-import torch
 from torch import nn
+import config
 
 
-# 用于ResNet18和34的残差块
-class BasicBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self,in_channel,out_channel,stride=1,down_sample=None):
-        super(BasicBlock,self).__init__()
-        self.conv1 = nn.Conv2d(in_channel,out_channel,kernel_size=3,
-                               stride=stride,padding=1,bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channel)
-
-        self.conv2 = nn.Conv2d(in_channel,out_channel,kernel_size=3,
-                               stride=stride,padding=1,bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channel)
-
-        self.relu = nn.ReLU()
-        self.down_sample = down_sample
-
-    def forward(self,x):
-        identity = x
-        if self.down_sample is not None:
-            identity = self.down_sample(x)
-        net = self.conv1(x)
-        net = self.bn1(net)
-        net = self.relu(net)
-
-        net = self.conv2(net)
-        net = self.bn2(net)
-
-        net += identity
-        out = self.relu(net)
-
-        return out
-
-
-# 用于ResNet5和ResNet101的残差结构
 class Bottleneck(nn.Module):
-    expansion = 4
+    expansion: int = 4
 
-    def __init__(self,in_channel,out_channel,stride=1,down_sample=None):
-        super(Bottleneck,self).__init__()
-        "********************************************************4"
-        self.conv1 = nn.Conv2d(in_channel,out_channel,kernel_size=1,
-                               stride=stride,bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channel)
+    def __init__(self, in_channels: int, out_channels: int, stride: tuple = (1, 1), down_sample=None):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=(1, 1),
+                               stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU(inplace=True)
 
-        "********************************************************"
-        self.conv2 = nn.Conv2d(in_channel,out_channel,kernel_size=3,
-                               stride=stride,bias=False,padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channel)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=(3, 3),
+                               stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu2 = nn.ReLU(inplace=True)
 
-        "********************************************************"
-        self.conv3 = nn.Conv2d(in_channel,out_channel * self.expansion,kernel_size=1,
-                               stride=stride,bias=False,padding=1)
-        self.bn3 = nn.BatchNorm2d(out_channel * self.expansion)
+        self.conv3 = nn.Conv2d(out_channels, out_channels * self.expansion, kernel_size=(3, 3),
+                               stride=stride, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels * self.expansion)
         self.relu = nn.ReLU(inplace=True)
+
         self.down_sample = down_sample
 
-    def forward(self,x):
+    def forward(self, x):
         identity = x
-        if self.down_sample is not None:
-            identity = self.down_sample(x)
-
         net = self.conv1(x)
         net = self.bn1(net)
-        net = self.relu(net)
+        net = self.relu1(net)
 
         net = self.conv2(net)
         net = self.bn2(net)
-        net = self.relu(net)
+        net = self.relu2(net)
 
         net = self.conv3(net)
         net = self.bn3(net)
 
+        if self.down_sample is not None:
+            identity = self.down_sample(x)
         net += identity
-        out = self.relu(net)
-        return out
+
+        return self.relu(net)
 
 
 class ResNet(nn.Module):
-    def __init__(self,block,blocks_num,num_classes=1000,include_top=True):
-        super(ResNet,self).__init__()
-        self.include_top = include_top
-        self.in_channel = 64  # 特征矩阵深度
-        # 512*512*3 -> 256*256*64
-        self.conv1 = nn.Conv2d(3,self.in_channel,kernel_size=7,
-                               stride=2,padding=3,bias=False)
-        self.bn1 = nn.BatchNorm2d(self.in_channel)
+    def __init__(self, block, blocks_num, num_classes, classify=False):
+        super(ResNet, self).__init__()
+        self.classify = classify
+
+        self.in_channels = 64
+        self.conv1 = nn.Conv2d(3, self.in_channels, kernel_size=(7, 7),
+                               stride=(2, 2), padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(self.in_channels)
         self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=(2, 2), padding=1)
 
-        # 256*256*64 -> 128*128*64
-        self.max_pool = nn.MaxPool2d(kernel_size=3,stride=2,padding=1)
+        self.layer1 = self._maker_layer(block, 64, blocks_num[0])
+        self.layer2 = self._maker_layer(block, 128, blocks_num[1], stride=2)
+        self.layer3 = self._maker_layer(block, 256, blocks_num[2], stride=2)
+        self.layer4 = self._maker_layer(block, 512, blocks_num[3], stride=2)
 
-        # 128*128*64 -> 128*128*256
-        self.layer1 = self._make_layer(block,64,blocks_num[0])
-        # 128*128*256 -> 64*64*512
-        self.layer2 = self._make_layer(block,128,blocks_num[1],stride=2)
-        # 64*64*512 -> 32*32*1024
-        self.layer3 = self._make_layer(block,256,blocks_num[2],stride=2)
-        # 32*32*1024 -> 16*16*2048
-        self.layer4 = self._make_layer(block,512,blocks_num[3],stride=2)
+        self.classifier = nn.Sequential(
+            nn.Linear(512, 4096),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
+            nn.Linear(4096, 512),
+            nn.ReLU(),
+            nn.Dropout(p=0.5),
+            nn.Linear(512, num_classes)
+        )
 
-        """
-        通过上述过程获得2048个有效特征层
-        """
-
-        if self.include_top:
-            self.avg_pool = nn.AdaptiveAvgPool2d((1,1))
-            self.fc = nn.Linear(512 * block.expansion,num_classes)
-
-        for m in self.modules():
-            if isinstance(m,nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight,mode='fan_out',nonlinearity='relu')
-
-    def _make_layer(self,block,channel,block_num,stride=1):
+    def _make_layer(self, block, channels, block_num, stride=(1, 1)):
         down_sample = None
-        if stride != 1 or self.in_channel != channel * block.expansion:
+        if stride != 1 or self.in_channels != channels * block.expansion:  # 只需要判断一个大类的block是否需要降采样
             down_sample = nn.Sequential(
-                nn.Conv2d(self.in_channel,channel * block.expansion,kernel_size=1,stride=stride),
-                nn.BatchNorm2d(channel * block.expansion)
+                nn.Conv2d(self.in_channels, channels * block.expansion,
+                          kernel_size=(1, 1), stride=stride, bias=False),
+                nn.BatchNorm2d(channels * block.expansion)
             )
-        layers = []
-        layers.append(block(self.in_channel,channel,down_sample=down_sample,stride=stride))
-        self.in_channel = channel * block.expansion
+        layers = [block(self.in_channels, channels, down_sample=down_sample, stride=stride)]
 
-        for _ in range(1,block_num):
-            layers.append(block(self.in_channel,channel))
+        self.in_channels = channels * block.expansion
+
+        for _ in range(1, block_num):
+            layers.append(block(self.in_channels, channels))
 
         return nn.Sequential(*layers)
 
-    def forward(self,x):
+    def forward(self, x):
         net = self.conv1(x)
         net = self.bn1(net)
         net = self.relu(net)
-        net = self.max_pool(net)
+        net = self.maxpool(net)
 
         net = self.layer1(net)
         net = self.layer2(net)
         net = self.layer3(net)
-        out = self.layer4(net)
+        net = self.layer4(net)
 
-        if self.include_top:
-            net = self.avg_pool(out)
-            net = torch.flatten(net,1)
-            out = self.fc(net)
+        if self.claasify:
+            net = net.contiguous().view(x.size()[0], -1)
+            net = self.classifier(net)
 
-        return out
-
-
-def ResNet34(num_classes=1000,include_top=True):
-    return ResNet(BasicBlock,[3,4,6,3],
-                  num_classes=num_classes,include_top=include_top)
+        return net
 
 
-def ResNet50(num_classes=1000,include_top=True):
-    return ResNet(Bottleneck,[3,4,6,3],
-                  num_classes=num_classes,include_top=include_top)
-
-
-def ResNet101(num_classes=1000,include_top=True):
-    return ResNet(Bottleneck,[3,4,23,3],
-                  num_classes=num_classes,include_top=include_top)
+def resnet50():
+    return ResNet(Bottleneck, [3, 4, 6, 3], config.classes)  # 1000=len(config.classes)
